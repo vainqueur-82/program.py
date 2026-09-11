@@ -1,0 +1,283 @@
+"""
+Hostel Room Booking and Fees Management System
+Coursework: 1203 ST- Programming Fundamentals
+Institution: Victoria University, Kampala
+"""
+
+import os
+import json
+
+# ==========================================
+# FILE PERSISTENCE & DATA STRUCTURES
+# ==========================================
+
+DATA_FILE = "hostel_data.json"
+
+# Initial default state if no persistent file is found
+DEFAULT_DATA = {
+    "blocks": {
+        "Block A": {"capacity_per_room": 2, "rooms": {"A101": [], "A102": [], "A103": []}},
+        "Block B": {"capacity_per_room": 4, "rooms": {"B201": [], "B202": [], "B203": []}},
+        "Block C": {"capacity_per_room": 1, "rooms": {"C301": [], "C302": [], "C303": []}}
+    },
+    "students": {}
+}
+
+SYSTEM_DATA = {}
+
+def load_data():
+    """Loads system data from a JSON file. Handles missing/damaged files gracefully."""
+    global SYSTEM_DATA
+    if not os.path.exists(DATA_FILE):
+        SYSTEM_DATA = DEFAULT_DATA
+        save_data()
+        print("\n[INFO] New data store initialized.")
+        return
+
+    try:
+        with open(DATA_FILE, "r") as f:
+            SYSTEM_DATA = json.load(f)
+            print("\n[INFO] System data successfully loaded from storage.")
+    except (json.JSONDecodeError, IOError):
+        print("\n[WARNING] Data file is corrupted or unreadable. Initializing default state.")
+        SYSTEM_DATA = DEFAULT_DATA
+
+def save_data():
+    """Saves current state of system data to JSON file."""
+    try:
+        with open(DATA_FILE, "w") as f:
+            json.dump(SYSTEM_DATA, f, indent=4)
+    except IOError as e:
+        print(f"\n[ERROR] Failed to save data: {e}")
+
+
+# ==========================================
+# MODULE A: OVERVIEW & OCCUPANCY
+# ==========================================
+
+def display_occupancy_overview():
+    """Prints a structured overview of hostel blocks and current occupancy."""
+    print("\n" + "="*50)
+    print("        HOSTEL OCCUPANCY OVERVIEW")
+    print("="*50)
+    blocks = SYSTEM_DATA.get("blocks", {})
+    
+    for block_name, block_info in blocks.items():
+        cap = block_info["capacity_per_room"]
+        print(f"\n--- {block_name} (Capacity per room: {cap}) ---")
+        for room, occupants in block_info["rooms"].items():
+            occupants_count = len(occupants)
+            status = "FULL" if occupants_count >= cap else f"Available ({cap - occupants_count} slots left)"
+            print(f"  Room {room}: {occupants_count}/{cap} occupied [{status}]")
+    print("="*50)
+
+
+# ==========================================
+# MODULE B: STUDENT REGISTRATION & ALLOCATION
+# ==========================================
+
+def allocate_student():
+    """Allocates a student to a room if space is available."""
+    print("\n--- Student Registration & Room Allocation ---")
+    reg_no = input("Enter Student Registration Number: ").strip().upper()
+    if not reg_no:
+        print("[ERROR] Registration number cannot be empty.")
+        return
+
+    if reg_no in SYSTEM_DATA["students"]:
+        print(f"[ERROR] Student with Reg No '{reg_no}' is already registered.")
+        return
+
+    name = input("Enter Student Full Name: ").strip()
+    if not name:
+        print("[ERROR] Name cannot be empty.")
+        return
+
+    display_occupancy_overview()
+    room_code = input("\nEnter Room Code to allocate (e.g., A101): ").strip().upper()
+
+    # Search for the room in blocks
+    target_block = None
+    target_room_data = None
+
+    for block_name, block_info in SYSTEM_DATA["blocks"].items():
+        if room_code in block_info["rooms"]:
+            target_block = block_name
+            target_room_data = block_info
+            break
+
+    if not target_block:
+        print(f"[ERROR] Room '{room_code}' does not exist in any hostel block.")
+        return
+
+    capacity = target_room_data["capacity_per_room"]
+    current_occupants = target_room_data["rooms"][room_code]
+
+    if len(current_occupants) >= capacity:
+        print(f"\n[ALLOCATION REJECTED] Room {room_code} in {target_block} has reached its maximum capacity of {capacity}.")
+        return
+
+    try:
+        total_fee = float(input("Enter Total Agreed Hostel Fee (UGX): "))
+        if total_fee <= 0:
+            print("[ERROR] Fee must be greater than 0.")
+            return
+    except ValueError:
+        print("[ERROR] Invalid numeric amount entered.")
+        return
+
+    # Commit allocation
+    target_room_data["rooms"][room_code].append(reg_no)
+    SYSTEM_DATA["students"][reg_no] = {
+        "name": name,
+        "block": target_block,
+        "room": room_code,
+        "total_fee": total_fee,
+        "paid_fee": 0.0,
+        "balance": total_fee,
+        "payments": []
+    }
+
+    save_data()
+    print(f"\n[SUCCESS] {name} ({reg_no}) allocated to Room {room_code} ({target_block}) successfully.")
+
+
+# ==========================================
+# MODULE C: FEE PAYMENT RECORDING
+# ==========================================
+
+def record_payment():
+    """Records full or partial fee payments against a student's account."""
+    print("\n--- Fee Payment Recording ---")
+    reg_no = input("Enter Student Registration Number: ").strip().upper()
+
+    student = SYSTEM_DATA["students"].get(reg_no)
+    if not student:
+        print(f"[ERROR] No student found with Registration Number '{reg_no}'.")
+        return
+
+    print(f"\nStudent Name: {student['name']}")
+    print(f"Total Fee:    {student['total_fee']:,.2f} UGX")
+    print(f"Amount Paid:  {student['paid_fee']:,.2f} UGX")
+    print(f"Balance Due:  {student['balance']:,.2f} UGX")
+
+    if student['balance'] <= 0:
+        print("[INFO] This student has cleared all outstanding hostel fees.")
+        return
+
+    try:
+        amount = float(input("\nEnter Payment Amount (UGX): "))
+        if amount <= 0:
+            print("[ERROR] Payment amount must be positive.")
+            return
+        if amount > student['balance']:
+            print(f"[WARNING] Payment exceeds current balance of {student['balance']:,.2f} UGX.")
+            confirm = input("Proceed anyway? (y/n): ").strip().lower()
+            if confirm != 'y':
+                print("[CANCELLED] Payment transaction aborted.")
+                return
+    except ValueError:
+        print("[ERROR] Invalid numeric input.")
+        return
+
+    # Update ledger
+    student['paid_fee'] += amount
+    student['balance'] = student['total_fee'] - student['paid_fee']
+    student['payments'].append(amount)
+
+    save_data()
+    print(f"\n[SUCCESS] Payment of {amount:,.2f} UGX recorded.")
+    print(f"Updated Outstanding Balance: {student['balance']:,.2f} UGX")
+
+
+# ==========================================
+# MODULE D: SEARCH & REPORTING
+# ==========================================
+
+def search_student():
+    """Searches for a student by Name or Registration Number."""
+    print("\n--- Student Search ---")
+    query = input("Enter Student Name or Reg Number to search: ").strip().lower()
+    
+    if not query:
+        print("[ERROR] Search query cannot be empty.")
+        return
+
+    found = False
+    for reg_no, details in SYSTEM_DATA["students"].items():
+        if query in reg_no.lower() or query in details["name"].lower():
+            print("\n" + "-"*40)
+            print(f"Reg Number : {reg_no}")
+            print(f"Full Name  : {details['name']}")
+            print(f"Block/Room : {details['block']} / {details['room']}")
+            print(f"Total Fee  : {details['total_fee']:,.2f} UGX")
+            print(f"Paid Fee   : {details['paid_fee']:,.2f} UGX")
+            print(f"Balance    : {details['balance']:,.2f} UGX")
+            print("-" * 40)
+            found = True
+
+    if not found:
+        print(f"[INFO] No matching student record found for '{query}'.")
+
+def generate_defaulters_report():
+    """Generates a list of students whose outstanding balance exceeds a threshold."""
+    print("\n--- Fee Defaulters Report ---")
+    try:
+        threshold = float(input("Enter minimum outstanding balance threshold (UGX): "))
+    except ValueError:
+        print("[ERROR] Invalid numeric threshold.")
+        return
+
+    print(f"\n--- Defaulters List (Balance > {threshold:,.2f} UGX) ---")
+    defaulters_found = False
+
+    for reg_no, details in SYSTEM_DATA["students"].items():
+        if details["balance"] > threshold:
+            defaulters_found = True
+            print(f"Reg No: {reg_no} | Name: {details['name']} | Room: {details['room']} | Balance Due: {details['balance']:,.2f} UGX")
+
+    if not defaulters_found:
+        print("[INFO] No students exceed the specified fee balance threshold.")
+
+
+# ==========================================
+# MODULE F: MENU-DRIVEN DRIVER PROGRAMME
+# ==========================================
+
+def main_menu():
+    """Main looping menu for the Hostel Warden driver program."""
+    load_data()
+    
+    while True:
+        print("\n" + "="*50)
+        print("   VICTORIA UNIVERSITY - HOSTEL MANAGEMENT SYSTEM")
+        print("="*50)
+        print("1. View Hostel Occupancy Overview")
+        print("2. Register & Allocate Student to Room")
+        print("3. Record Fee Payment")
+        print("4. Search Student Record")
+        print("5. Generate Fee Defaulters Report")
+        print("6. Exit System")
+        print("="*50)
+
+        choice = input("Select an option (1-6): ").strip()
+
+        if choice == "1":
+            display_occupancy_overview()
+        elif choice == "2":
+            allocate_student()
+        elif choice == "3":
+            record_payment()
+        elif choice == "4":
+            search_student()
+        elif choice == "5":
+            generate_defaulters_report()
+        elif choice == "6":
+            print("\n[INFO] Saving data and exiting system. Goodbye!")
+            save_data()
+            break
+        else:
+            print("\n[ERROR] Invalid choice. Please enter a number between 1 and 6.")
+
+if __name__ == "__main__":
+    main_menu()
